@@ -1,2 +1,2 @@
 # FirstPersonShooter
- An multiplayer FPS
+ An multiplayer FPS game
