@@ -10,7 +10,6 @@ class UInputComponent;
 class USkeletalMeshComponent;
 class USceneComponent;
 class UCameraComponent;
-class UMotionControllerComponent;
 class UAnimMontage;
 class USoundBase;
 
@@ -45,6 +44,8 @@ public:
 protected:
 	virtual void BeginPlay();
 
+	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const;
+
 public:
 	/** Base turn rate, in deg/sec. Other scaling may affect final turn rate. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category=Camera)
@@ -53,6 +54,9 @@ public:
 	/** Base look up/down rate, in deg/sec. Other scaling may affect final rate. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category=Camera)
 	float BaseLookUpRate;
+
+	UPROPERTY(Replicated, EditAnywhere, BlueprintReadWrite)
+	FRotator LookRotation;
 
 	/** Gun muzzle's offset from the characters location */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category=Gameplay)
@@ -69,6 +73,9 @@ public:
 	/** AnimMontage to play each time we fire */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Gameplay)
 	UAnimMontage* FireAnimation;
+
+	UPROPERTY(Replicated, EditAnywhere, BlueprintReadWrite)
+	bool isCrouched;
 
 protected:
 	
@@ -91,6 +98,14 @@ protected:
 	/** Handles stafing movement, left and right */
 	void MoveRight(float Val);
 
+	void Sprint();
+	void Walk();
+
+	UFUNCTION(Server, Reliable, WithValidation)
+	void Server_SetMaxWalkSpeed(float speed);
+	bool Server_SetMaxWalkSpeed_Validate(float speed);
+	void Server_SetMaxWalkSpeed_Implementation(float speed);
+
 	/**
 	 * Called via input to turn at a given rate.
 	 * @param Rate	This is a normalized rate, i.e. 1.0 means 100% of desired turn rate
@@ -102,6 +117,19 @@ protected:
 	 * @param Rate	This is a normalized rate, i.e. 1.0 means 100% of desired turn rate
 	 */
 	void LookUpAtRate(float Rate);
+
+	UFUNCTION(Server, Reliable, WithValidation)
+	void Server_LookUp(FRotator Rotation);
+	bool Server_LookUp_Validate(FRotator Rotation);
+	void Server_LookUp_Implementation(FRotator Rotation);
+
+	void StartCrouch();
+	void StopCrouch();
+
+	UFUNCTION(Server, Reliable, WithValidation)
+	void Server_isCrouch(bool val);
+	bool Server_isCrouch_Validate(bool val);
+	void Server_isCrouch_Implementation(bool val);
 	
 protected:
 	// APawn interface
@@ -113,6 +141,4 @@ public:
 	USkeletalMeshComponent* GetMesh1P() const { return Mesh1P; }
 	/** Returns FirstPersonCameraComponent subobject **/
 	UCameraComponent* GetFirstPersonCameraComponent() const { return FirstPersonCameraComponent; }
-
 };
-

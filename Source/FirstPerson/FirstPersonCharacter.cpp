@@ -9,8 +9,8 @@
 #include "GameFramework/InputSettings.h"
 #include "HeadMountedDisplayFunctionLibrary.h"
 #include "Kismet/GameplayStatics.h"
-#include "MotionControllerComponent.h"
-#include "XRMotionControllerBase.h" // for FXRMotionControllerBase::RightHandSourceId
+#include "Net/UnrealNetwork.h"
+#include "GameFramework/CharacterMovementComponent.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogFPChar, Warning, All);
 
@@ -46,7 +46,6 @@ AFirstPersonCharacter::AFirstPersonCharacter()
 	FP_Gun->SetOnlyOwnerSee(false);			// otherwise won't be visible in the multiplayer
 	FP_Gun->bCastDynamicShadow = false;
 	FP_Gun->CastShadow = false;
-	// FP_Gun->SetupAttachment(Mesh1P, TEXT("GripPoint"));
 	FP_Gun->SetupAttachment(RootComponent);
 
 	FP_MuzzleLocation = CreateDefaultSubobject<USceneComponent>(TEXT("MuzzleLocation"));
@@ -90,6 +89,14 @@ void AFirstPersonCharacter::BeginPlay()
 	}
 }
 
+void AFirstPersonCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty> &OutLifetimeProps) const
+{
+	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+
+	DOREPLIFETIME(AFirstPersonCharacter, LookRotation);
+	DOREPLIFETIME(AFirstPersonCharacter, isCrouched);
+}
+
 //////////////////////////////////////////////////////////////////////////
 // Input
 
@@ -102,8 +109,16 @@ void AFirstPersonCharacter::SetupPlayerInputComponent(class UInputComponent* Pla
 	PlayerInputComponent->BindAction("Jump", IE_Pressed, this, &ACharacter::Jump);
 	PlayerInputComponent->BindAction("Jump", IE_Released, this, &ACharacter::StopJumping);
 
+	// Bind crouch events
+	PlayerInputComponent->BindAction("Crouch", IE_Pressed, this, &AFirstPersonCharacter::StartCrouch);
+	PlayerInputComponent->BindAction("Crouch", IE_Released, this, &AFirstPersonCharacter::StopCrouch);
+
 	// Bind fire event
 	PlayerInputComponent->BindAction("Fire", IE_Pressed, this, &AFirstPersonCharacter::OnFire);
+
+	// Bind sprint events
+	PlayerInputComponent->BindAction("Sprint", IE_Pressed, this, &AFirstPersonCharacter::Sprint);
+	PlayerInputComponent->BindAction("Sprint", IE_Released, this, &AFirstPersonCharacter::Walk);
 
 	// Bind movement events
 	PlayerInputComponent->BindAxis("MoveForward", this, &AFirstPersonCharacter::MoveForward);
@@ -130,7 +145,7 @@ void AFirstPersonCharacter::OnFire()
 			// MuzzleOffset is in camera space, so transform it to world space before offsetting from the character location to find the final muzzle position
 			const FVector SpawnLocation = ((FP_MuzzleLocation != nullptr) ? FP_MuzzleLocation->GetComponentLocation() : GetActorLocation()) + SpawnRotation.RotateVector(GunOffset);
 
-			
+			// Replicate fire event
 			if(!World->IsServer()) Server_OnFire(SpawnLocation, SpawnRotation);
 			else Multi_OnFire(SpawnLocation, SpawnRotation);
 		}
@@ -173,10 +188,7 @@ void AFirstPersonCharacter::Multi_OnFire_Implementation(FVector Location, FRotat
 	GetWorld()->SpawnActor<AFirstPersonProjectile>(ProjectileClass, Location, Rotation, ActorSpawnParams);
 
 	// try and play the sound if specified
-	if (FireSound != nullptr)
-	{
-		UGameplayStatics::PlaySoundAtLocation(this, FireSound, GetActorLocation());
-	}
+	if (FireSound != nullptr) UGameplayStatics::PlaySoundAtLocation(this, FireSound, Location);
 }
 
 void AFirstPersonCharacter::MoveForward(float Value)
@@ -197,6 +209,28 @@ void AFirstPersonCharacter::MoveRight(float Value)
 	}
 }
 
+void AFirstPersonCharacter::Sprint()
+{
+	if (!GetWorld()->IsServer()) Server_SetMaxWalkSpeed(1500);
+	else GetCharacterMovement()->MaxWalkSpeed = 1500;
+}
+
+void AFirstPersonCharacter::Walk()
+{
+	if (!GetWorld()->IsServer()) Server_SetMaxWalkSpeed(600);
+	else GetCharacterMovement()->MaxWalkSpeed = 600;
+}
+
+bool AFirstPersonCharacter::Server_SetMaxWalkSpeed_Validate(float speed)
+{
+	return true;
+}
+
+void AFirstPersonCharacter::Server_SetMaxWalkSpeed_Implementation(float speed)
+{
+	GetCharacterMovement()->MaxWalkSpeed = speed;
+}
+
 void AFirstPersonCharacter::TurnAtRate(float Rate)
 {
 	// calculate delta for this frame from the rate information
@@ -207,4 +241,46 @@ void AFirstPersonCharacter::LookUpAtRate(float Rate)
 {
 	// calculate delta for this frame from the rate information
 	AddControllerPitchInput(Rate * BaseLookUpRate * GetWorld()->GetDeltaSeconds());
+
+	// replicate LookRotation
+	if (!GetWorld()->IsServer()) Server_LookUp(GetControlRotation());
+	else LookRotation = GetControlRotation();
+}
+
+bool AFirstPersonCharacter::Server_LookUp_Validate(FRotator Rotation)
+{
+	return true;
+}
+
+void AFirstPersonCharacter::Server_LookUp_Implementation(FRotator Rotation)
+{
+	LookRotation = Rotation;
+}
+
+void AFirstPersonCharacter::StartCrouch()
+{
+	Crouch();
+
+	//Replicate crouch
+	if (!GetWorld()->IsServer()) Server_isCrouch(true);
+	else isCrouched = true;
+}
+
+void AFirstPersonCharacter::StopCrouch()
+{
+	UnCrouch();
+
+	//Replicate uncrouch
+	if (!GetWorld()->IsServer()) Server_isCrouch(false);
+	else isCrouched = false;
+}
+
+bool AFirstPersonCharacter::Server_isCrouch_Validate(bool val)
+{
+	return true;
+}
+
+void AFirstPersonCharacter::Server_isCrouch_Implementation(bool val)
+{
+	isCrouched = val;
 }
