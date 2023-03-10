@@ -2,6 +2,7 @@
 
 #pragma once
 
+#include "Weapon.h"
 #include "CoreMinimal.h"
 #include "GameFramework/Character.h"
 #include "FirstPersonCharacter.generated.h"
@@ -13,6 +14,55 @@ class UCameraComponent;
 class UAnimMontage;
 class USoundBase;
 
+USTRUCT()
+struct FGun
+{
+	GENERATED_BODY()
+
+	// Total amount of ammo that can be in the weapon
+	//UPROPERTY(EditAnyWhere, BlueprintReadWrite, Category = Weapon)
+	int maxClipAmmo;
+
+	// Total amount of ammo in the weapon
+	//UPROPERTY(EditAnyWhere, BlueprintReadWrite, Category = Weapon)
+	int clipAmmo;
+
+	// Time it takes to reload the weapon
+	//UPROPERTY(EditAnyWhere, BlueprintReadWrite, Category = Weapon)
+	int reloadTime;
+
+	// Weapon damage
+	//UPROPERTY(EditAnyWhere, BlueprintReadWrite, Category = Weapon)
+	int damage;
+
+	bool active;
+
+	void Initialize(EWeaponType type)
+	{
+		switch (type)
+		{
+			case Revolver:
+			{
+				clipAmmo = 6;
+				maxClipAmmo = 6;
+				reloadTime = 7;
+				damage = 25;
+				active = true;
+				break;
+			}
+			case Melee: // Melee/Knife
+			{
+				clipAmmo = 0;
+				maxClipAmmo = 0;
+				reloadTime = 0;
+				damage = 35;
+				active = true;
+				break;
+			}
+		}
+	}
+};
+
 UCLASS(config=Game)
 class AFirstPersonCharacter : public ACharacter
 {
@@ -20,7 +70,7 @@ class AFirstPersonCharacter : public ACharacter
 
 	/** Character mesh: Network view (entire body; seen only by others) */
 	UPROPERTY(VisibleDefaultsOnly, Category = Mesh)
-	USkeletalMeshComponent* Mesh0;
+	USkeletalMeshComponent* Mesh3P;
 
 	/** Pawn mesh: 1st person view (arms; seen only by self) */
 	UPROPERTY(VisibleDefaultsOnly, Category=Mesh)
@@ -38,47 +88,91 @@ class AFirstPersonCharacter : public ACharacter
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = Camera, meta = (AllowPrivateAccess = "true"))
 	UCameraComponent* FirstPersonCameraComponent;
 
+	/** Gun meshes: 1st person view (seen only by self) */
+	UPROPERTY(VisibleDefaultsOnly, Category = Mesh)
+	UStaticMeshComponent* FP_GunMeshes[MAX_WEAPON_TYPE];
+
+	/** Gun meshes: 3rd person view (seen only by others) */
+	UPROPERTY(VisibleDefaultsOnly, Category = Mesh)
+	UStaticMeshComponent* TP_GunMeshes[MAX_WEAPON_TYPE];
+
+	// Player's health
+	UPROPERTY(VisibleDefaultsOnly, Category = Gameplay)
+	float health = 100;
+
 public:
 	AFirstPersonCharacter();
 
-protected:
-	virtual void BeginPlay();
+	UFUNCTION()
+	void OnOverLapBegin(UPrimitiveComponent* OverLappedComp, AActor* OtherActor, UPrimitiveComponent* OtherComp, int32 OtherBodyIntdex, bool bFromSweep, const FHitResult& SweepResult);
 
-	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const;
+	/** Returns Mesh1P subobject **/
+	USkeletalMeshComponent* GetMesh1P() const { return Mesh1P; }
 
-public:
+	/** Returns FirstPersonCameraComponent subobject **/
+	UCameraComponent* GetFirstPersonCameraComponent() const { return FirstPersonCameraComponent; }
+
+	//Weapons that the player is carring
+	FGun weapons[MAX_WEAPON_TYPE];
+
+	// Total amount of ammo that can be carried foreach weapon type
+	int maxTotalAmmo[MAX_WEAPON_TYPE] = { 0, 200, 100, 300 };
+
+	// Total amount of ammo being carried foreach weapon type
+	int totalAmmo[MAX_WEAPON_TYPE] = { 0, 20, 10, 30 };
+
 	/** Base turn rate, in deg/sec. Other scaling may affect final turn rate. */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category=Camera)
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = Mesh)
+	FString TP_MeshName;
+
+	/** Base turn rate, in deg/sec. Other scaling may affect final turn rate. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = Camera)
 	float BaseTurnRate;
 
 	/** Base look up/down rate, in deg/sec. Other scaling may affect final rate. */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category=Camera)
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = Camera)
 	float BaseLookUpRate;
 
 	UPROPERTY(Replicated, EditAnywhere, BlueprintReadWrite)
 	FRotator LookRotation;
 
 	/** Gun muzzle's offset from the characters location */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category=Gameplay)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Gameplay)
 	FVector GunOffset;
 
 	/** Projectile class to spawn */
-	UPROPERTY(EditDefaultsOnly, Category=Projectile)
+	UPROPERTY(EditDefaultsOnly, Category = Projectile)
 	TSubclassOf<class AFirstPersonProjectile> ProjectileClass;
 
 	/** Sound to play each time we fire */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category=Gameplay)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Gameplay)
 	USoundBase* FireSound;
 
 	/** AnimMontage to play each time we fire */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Gameplay)
 	UAnimMontage* FireAnimation;
 
+	/** Animation state to change each time we crouch */
 	UPROPERTY(Replicated, EditAnywhere, BlueprintReadWrite)
 	bool isCrouched;
 
+	// Weapon index of the player is currently using
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Gameplay)
+	TEnumAsByte<EWeaponType> EquippedGun = Revolver;
+
+	// Weapon index of the player is cached for switch
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Gameplay)
+	TEnumAsByte<EWeaponType> CachedGun = Melee;
+
 protected:
-	
+	virtual void BeginPlay();
+
+	// APawn interface
+	virtual void SetupPlayerInputComponent(UInputComponent* InputComponent) override;
+	// End of APawn interface
+
+	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const;
+
 	/** Fires a projectile. */
 	void OnFire();
 
@@ -130,15 +224,15 @@ protected:
 	void Server_isCrouch(bool val);
 	bool Server_isCrouch_Validate(bool val);
 	void Server_isCrouch_Implementation(bool val);
-	
-protected:
-	// APawn interface
-	virtual void SetupPlayerInputComponent(UInputComponent* InputComponent) override;
-	// End of APawn interface
 
-public:
-	/** Returns Mesh1P subobject **/
-	USkeletalMeshComponent* GetMesh1P() const { return Mesh1P; }
-	/** Returns FirstPersonCameraComponent subobject **/
-	UCameraComponent* GetFirstPersonCameraComponent() const { return FirstPersonCameraComponent; }
+	// Weapon events
+	void OnMelee();
+	void OnRevolver();
+	void OnShotgun();
+	void OnRifle();
+	void OnSwitchWeapon();
+	void OnReload();
+	void OnDropWeapon();
+	void OnEquipWeapon(EWeaponType weapontype);
+
 };

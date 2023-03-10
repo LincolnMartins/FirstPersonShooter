@@ -22,6 +22,8 @@ AFirstPersonCharacter::AFirstPersonCharacter()
 	// Set size for collision capsule
 	GetCapsuleComponent()->InitCapsuleSize(55.f, 96.0f);
 
+	GetCapsuleComponent()->OnComponentBeginOverlap.AddDynamic(this, &AFirstPersonCharacter::OnOverLapBegin);
+
 	// set our turn rates for input
 	BaseTurnRate = 45.f;
 	BaseLookUpRate = 45.f;
@@ -31,7 +33,7 @@ AFirstPersonCharacter::AFirstPersonCharacter()
 	FirstPersonCameraComponent->SetupAttachment(GetCapsuleComponent());
 	FirstPersonCameraComponent->SetRelativeLocation(FVector(-39.56f, 1.75f, 64.f)); // Position the camera
 	FirstPersonCameraComponent->bUsePawnControlRotation = true;
-
+	
 	// Create a mesh component that will be used when being viewed from a '1st person' view (when controlling this pawn)
 	Mesh1P = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("CharacterMesh1P"));
 	Mesh1P->SetOnlyOwnerSee(true);
@@ -54,29 +56,15 @@ AFirstPersonCharacter::AFirstPersonCharacter()
 
 	// Default offset from the character location for projectiles to spawn
 	GunOffset = FVector(100.0f, 0.0f, 10.0f);
-
-	// Note: The ProjectileClass and the skeletal mesh/anim blueprints for Mesh1P and FP_Gun
-	// are set in the derived blueprint asset named MyCharacter to avoid direct content references in C++.
 }
 
 void AFirstPersonCharacter::BeginPlay()
 {
-	// Call the base class  
+	// Call the base class
 	Super::BeginPlay();
 
-	// Get the mesh component that will be used when being viewed from a networked view (when not controlling this pawn)
-	TArray<USkeletalMeshComponent*> comps;
-	GetComponents(comps);
-	for (auto SkeletalMeshComponent : comps)
-	{
-		if (SkeletalMeshComponent->GetName() == "CharacterMesh0")
-		{
-			Mesh0 = SkeletalMeshComponent;
-			break;
-		}
-	}
-
 	//Attach gun mesh component to Skeleton, doing it here because the skeleton is not yet created in the constructor	
+	/*
 	if (IsLocallyControlled())
 	{
 		FP_Gun->SetupAttachment(Mesh1P, TEXT("GripPoint"));
@@ -84,9 +72,57 @@ void AFirstPersonCharacter::BeginPlay()
 	}
 	else
 	{
-		FP_Gun->SetupAttachment(Mesh0, TEXT("GripPoint"));
-		FP_Gun->AttachToComponent(Mesh0, FAttachmentTransformRules(EAttachmentRule::SnapToTarget, true), TEXT("GripPoint"));
+		FP_Gun->SetupAttachment(Mesh3P, TEXT("GripPoint"));
+		FP_Gun->AttachToComponent(Mesh3P, FAttachmentTransformRules(EAttachmentRule::SnapToTarget, true), TEXT("GripPoint"));
 	}
+	*/
+
+	// Get the mesh component that will be used when being viewed from a networked view (when not controlling this pawn)
+	TArray<USkeletalMeshComponent*> comps;
+	GetComponents(comps);
+	for (auto SkeletalMeshComponent : comps)
+	{
+		if (SkeletalMeshComponent->GetName() == TP_MeshName)
+		{
+			Mesh3P = SkeletalMeshComponent;
+			break;
+		}
+	}
+
+	TArray<UStaticMeshComponent*> guns;
+	GetComponents(guns);
+	for (auto StaticMeshComponent : guns)
+	{
+		if (StaticMeshComponent->GetName() == TEXT("FP_Revolver"))
+		{
+			FP_GunMeshes[Revolver] = StaticMeshComponent;
+		}
+		else if (StaticMeshComponent->GetName() == TEXT("FP_Shotgun"))
+		{
+			FP_GunMeshes[Shotgun] = StaticMeshComponent;
+		}
+		else if (StaticMeshComponent->GetName() == TEXT("FP_Rifle"))
+		{
+			FP_GunMeshes[Rifle] = StaticMeshComponent;
+		}
+		else if (StaticMeshComponent->GetName() == TEXT("TP_Revolver"))
+		{
+			TP_GunMeshes[Revolver] = StaticMeshComponent;
+		}
+		else if (StaticMeshComponent->GetName() == TEXT("TP_Shotgun"))
+		{
+			TP_GunMeshes[Shotgun] = StaticMeshComponent;
+		}
+		else if (StaticMeshComponent->GetName() == TEXT("TP_Rifle"))
+		{
+			TP_GunMeshes[Rifle] = StaticMeshComponent;
+		}
+	}
+
+	// Initializing guns
+	weapons[Melee].Initialize(Melee);
+	weapons[Revolver].Initialize(Revolver);
+	OnEquipWeapon(Revolver);
 }
 
 void AFirstPersonCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty> &OutLifetimeProps) const
@@ -95,6 +131,39 @@ void AFirstPersonCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>
 
 	DOREPLIFETIME(AFirstPersonCharacter, LookRotation);
 	DOREPLIFETIME(AFirstPersonCharacter, isCrouched);
+}
+
+void AFirstPersonCharacter::OnOverLapBegin(UPrimitiveComponent* OverLappedComp, AActor* OtherActor, UPrimitiveComponent* OtherComp, int32 OtherBodyIntdex, bool bFromSweep, const FHitResult& SweepResult)
+{
+	//Pickup Gun
+	if (OtherActor->IsA(AWeapon::StaticClass()))
+	{
+		AWeapon* gun = Cast<AWeapon>(OtherActor);
+		gun->OnWeaponPickup();
+
+		if (IsLocallyControlled())
+		{
+			EWeaponType type = gun->weaponType;
+			if (weapons[type].active == false)
+			{
+				weapons[type].clipAmmo = gun->clipAmmo;
+				weapons[type].maxClipAmmo = gun->maxClipAmmo;
+				weapons[type].reloadTime = gun->reloadTime;
+				weapons[type].damage = gun->damage;
+				weapons[type].active = true;
+				OnEquipWeapon(type);
+			}
+			else if (totalAmmo[type] <= 0)
+			{
+				totalAmmo[type] = gun->clipAmmo;
+			}
+			else if (totalAmmo[type] + gun->clipAmmo > maxTotalAmmo[type])
+			{
+				totalAmmo[type] = maxTotalAmmo[type];
+			}
+			else totalAmmo[type] += gun->clipAmmo;
+		}
+	}
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -113,12 +182,24 @@ void AFirstPersonCharacter::SetupPlayerInputComponent(class UInputComponent* Pla
 	PlayerInputComponent->BindAction("Crouch", IE_Pressed, this, &AFirstPersonCharacter::StartCrouch);
 	PlayerInputComponent->BindAction("Crouch", IE_Released, this, &AFirstPersonCharacter::StopCrouch);
 
-	// Bind fire event
+	// Bind fire events
 	PlayerInputComponent->BindAction("Fire", IE_Pressed, this, &AFirstPersonCharacter::OnFire);
+	//PlayerInputComponent->BindAction("SecondaryFire", IE_Pressed, this, &AFirstPersonCharacter::OnSecondaryFire);
 
 	// Bind sprint events
 	PlayerInputComponent->BindAction("Sprint", IE_Pressed, this, &AFirstPersonCharacter::Sprint);
 	PlayerInputComponent->BindAction("Sprint", IE_Released, this, &AFirstPersonCharacter::Walk);
+
+	// Bind Weapon Events
+	PlayerInputComponent->BindAction("Melee", IE_Pressed, this, &AFirstPersonCharacter::OnMelee);
+	PlayerInputComponent->BindAction("Revolver", IE_Pressed, this, &AFirstPersonCharacter::OnRevolver);
+	PlayerInputComponent->BindAction("Shotgun", IE_Pressed, this, &AFirstPersonCharacter::OnShotgun);
+	PlayerInputComponent->BindAction("Rifle", IE_Pressed, this, &AFirstPersonCharacter::OnRifle);
+	PlayerInputComponent->BindAction("SwitchWeapon", IE_Pressed, this, &AFirstPersonCharacter::OnSwitchWeapon);
+	PlayerInputComponent->BindAction("Reload", IE_Pressed, this, &AFirstPersonCharacter::OnReload);
+	PlayerInputComponent->BindAction("DropWeapon", IE_Pressed, this, &AFirstPersonCharacter::OnDropWeapon);
+
+	//PlayerInputComponent->BindAction("Lamp", IE_Pressed, this, &AFirstPersonCharacter::OnLamp);
 
 	// Bind movement events
 	PlayerInputComponent->BindAxis("MoveForward", this, &AFirstPersonCharacter::MoveForward);
@@ -135,30 +216,45 @@ void AFirstPersonCharacter::SetupPlayerInputComponent(class UInputComponent* Pla
 
 void AFirstPersonCharacter::OnFire()
 {
-	// try and fire a projectile
 	if (ProjectileClass != nullptr)
 	{
-		UWorld* const World = GetWorld();
-		if (World != nullptr)
+		if (EquippedGun != Melee)
 		{
-			const FRotator SpawnRotation = GetControlRotation();
-			// MuzzleOffset is in camera space, so transform it to world space before offsetting from the character location to find the final muzzle position
-			const FVector SpawnLocation = ((FP_MuzzleLocation != nullptr) ? FP_MuzzleLocation->GetComponentLocation() : GetActorLocation()) + SpawnRotation.RotateVector(GunOffset);
+			if (weapons[EquippedGun].clipAmmo > 0)
+			{
+				UWorld* const World = GetWorld();
+				if (World != nullptr)
+				{
+					const FRotator SpawnRotation = GetControlRotation();
+					// MuzzleOffset is in camera space, so transform it to world space before offsetting from the character location to find the final muzzle position
+					const FVector SpawnLocation = ((FP_MuzzleLocation != nullptr) ? FP_MuzzleLocation->GetComponentLocation() : GetActorLocation()) + SpawnRotation.RotateVector(GunOffset);
 
-			// Replicate fire event
-			if(!World->IsServer()) Server_OnFire(SpawnLocation, SpawnRotation);
-			else Multi_OnFire(SpawnLocation, SpawnRotation);
+					// Replicate fire event
+					if (!World->IsServer()) Server_OnFire(SpawnLocation, SpawnRotation);
+					else Multi_OnFire(SpawnLocation, SpawnRotation);
+
+					weapons[EquippedGun].clipAmmo -= 1;
+				}
+
+				// try and play a firing animation if specified
+				if (FireAnimation != nullptr)
+				{
+					// Get the animation object for the arms mesh
+					UAnimInstance* AnimInstance = Mesh1P->GetAnimInstance();
+					if (AnimInstance != nullptr)
+					{
+						AnimInstance->Montage_Play(FireAnimation, 1.f);
+					}
+				}
+			}
+			else //Not enough ammo in the weapon
+			{
+				//TODO: just play 'click' sound from trigger
+			}
 		}
-	}
-	
-	// try and play a firing animation if specified
-	if (FireAnimation != nullptr)
-	{
-		// Get the animation object for the arms mesh
-		UAnimInstance* AnimInstance = Mesh1P->GetAnimInstance();
-		if (AnimInstance != nullptr)
+		else // Melee Weapon Equipped
 		{
-			AnimInstance->Montage_Play(FireAnimation, 1.f);
+			//TODO
 		}
 	}
 }
@@ -211,8 +307,12 @@ void AFirstPersonCharacter::MoveRight(float Value)
 
 void AFirstPersonCharacter::Sprint()
 {
-	if (!GetWorld()->IsServer()) Server_SetMaxWalkSpeed(1500);
-	else GetCharacterMovement()->MaxWalkSpeed = 1500;
+	if (!isCrouched)
+	{
+		if (!GetWorld()->IsServer()) Server_SetMaxWalkSpeed(1500);
+		else GetCharacterMovement()->MaxWalkSpeed = 1500;
+	}
+	//TODO: stamina system
 }
 
 void AFirstPersonCharacter::Walk()
@@ -259,6 +359,9 @@ void AFirstPersonCharacter::Server_LookUp_Implementation(FRotator Rotation)
 
 void AFirstPersonCharacter::StartCrouch()
 {
+	//Stop Sprinting if player crouches while sprint
+	if (GetCharacterMovement()->MaxWalkSpeed > 600) Walk();
+
 	Crouch();
 
 	//Replicate crouch
@@ -283,4 +386,82 @@ bool AFirstPersonCharacter::Server_isCrouch_Validate(bool val)
 void AFirstPersonCharacter::Server_isCrouch_Implementation(bool val)
 {
 	isCrouched = val;
+}
+
+void AFirstPersonCharacter::OnMelee()
+{
+	if (EquippedGun != Melee && weapons[Melee].active != false)
+	{
+		//TODO
+	}
+}
+
+void AFirstPersonCharacter::OnRevolver()
+{
+	if (EquippedGun != Revolver && weapons[Revolver].active != false)
+	{
+		CachedGun = EquippedGun;
+		EquippedGun = Revolver;
+	}
+}
+
+void AFirstPersonCharacter::OnShotgun()
+{
+	if (EquippedGun != Shotgun && weapons[Shotgun].active != false)
+	{
+		CachedGun = EquippedGun;
+		EquippedGun = Shotgun;
+	}
+}
+
+void AFirstPersonCharacter::OnRifle()
+{
+	if (EquippedGun != Rifle && weapons[Rifle].active != false)
+	{
+		CachedGun = EquippedGun;
+		EquippedGun = Rifle;
+	}
+}
+
+void AFirstPersonCharacter::OnSwitchWeapon()
+{
+	auto tmp = EquippedGun;
+	EquippedGun = CachedGun;
+	CachedGun = tmp;
+}
+
+void AFirstPersonCharacter::OnEquipWeapon(EWeaponType weapontype)
+{
+	FP_GunMeshes[EquippedGun]->SetHiddenInGame(true);
+	TP_GunMeshes[EquippedGun]->SetHiddenInGame(true);
+
+	FP_GunMeshes[weapontype]->SetHiddenInGame(false);
+	TP_GunMeshes[weapontype]->SetHiddenInGame(false);
+
+	CachedGun = EquippedGun;
+	EquippedGun = weapontype;
+}
+
+void AFirstPersonCharacter::OnReload()
+{
+	if (EquippedGun != Melee)
+	{
+		int missingAmmoCount = weapons[EquippedGun].maxClipAmmo - weapons[EquippedGun].clipAmmo;
+		if (missingAmmoCount > 0)
+		{
+			for (int i = 0; i < missingAmmoCount; i++)
+			{
+				if (totalAmmo[EquippedGun] > 0)
+				{
+					weapons[EquippedGun].clipAmmo++;
+					totalAmmo[EquippedGun]--;
+				}
+				else break; // out of ammo
+			}
+		}
+	}
+}
+
+void AFirstPersonCharacter::OnDropWeapon()
+{
 }
